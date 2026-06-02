@@ -3,6 +3,20 @@
 Datadog Observability Maturity Scanner — GitHub API (sem clone)
 Usa Code Search + Contents API do GitHub para varrer N repos
 sem precisar clonar nada localmente.
+
+Pré-requisito:
+    pip install requests
+
+Uso:
+    export GITHUB_TOKEN=ghp_...
+    python dd_github_scan.py --org MinhaOrg
+    python dd_github_scan.py --org MinhaOrg --csv --json
+    python dd_github_scan.py --org MinhaOrg --workers 8
+    python dd_github_scan.py --org MinhaOrg --resume   # retoma varredura interrompida
+
+Como gerar o token:
+    github.com → Settings → Developer settings → Personal access tokens → Fine-grained
+    Permissões necessárias: Contents (read), Metadata (read)
 """
 
 import os
@@ -690,7 +704,7 @@ def build_search_map(client: GitHubClient, org: str) -> dict[str, dict]:
 # ──────────────────────────────────────────────
 
 MATURITY_LEVELS = [
-    (0,  "❌ Não instrumentado"),
+    (0,  "🔴 Não instrumentado"),
     (20, "🟡 Instalação básica"),
     (50, "🟠 Parcialmente instrumentado"),
     (75, "🟢 Bem instrumentado"),
@@ -1242,7 +1256,7 @@ def main():
             results.append(RepoResult(
                 name=repo_meta["name"], full_name=repo_meta["full_name"],
                 language=lang, archived=repo_meta.get("archived", False),
-                signals={}, score=0, maturity="❌ Não instrumentado",
+                signals={}, score=0, maturity="🔴 Não instrumentado",
                 url=repo_meta.get("html_url", ""),
             ))
 

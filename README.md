@@ -11,7 +11,7 @@ Desenvolvido para responder a uma pergunta simples: *quais dos nossos serviços 
 O script opera em duas fases para ser eficiente com 1000+ repositórios:
 
 **Fase 1 — Code Search em lote**
-Faz 16 buscas na API do GitHub (`/search/code`) cobrindo todos os repositórios da org de uma vez. Identifica quais repos têm sinais Datadog sem precisar abrir nenhum arquivo individualmente. Repos sem nenhum sinal já são marcados como não instrumentados aqui, sem gastar mais requisições.
+Faz 26 buscas na API do GitHub (`/search/code`) cobrindo todos os repositórios da org de uma vez. Identifica quais repos têm sinais Datadog sem precisar abrir nenhum arquivo individualmente. Repos sem nenhum sinal já são marcados como não instrumentados aqui, sem gastar mais requisições.
 
 **Fase 2 — Contents API nos repos relevantes**
 Somente para os repos que apareceram na fase 1, vai buscar os arquivos individualmente para confirmar e detalhar cada sinal. Roda com threads paralelas para ser mais rápido.
@@ -175,6 +175,11 @@ python dd_github_scan.py --org MinhaOrg --token ghp_xxxx --csv
 | Arquivo | O que verifica |
 |---|---|
 | `package.json` | Dependência `dd-trace`, `datadog-lambda-js` ou `@datadog/browser-rum` e versão |
+| `package.json` scripts.start | Flag `--require dd-trace/init` |
+| `src/tracing/*.ts`, `tracer.js`, `datadog.ts`... | `require('dd-trace').init()`, `tracer.init()`, `logInjection: true`, `DD_MONITORING_ENABLED` |
+| `src/bin/main.js`, `app.ts`, `server.js`, `index.ts`... | Mesmos padrões acima em entrypoints |
+
+> O script não usa lista fixa de caminhos — ele varre todos os `.js` e `.ts` do repo (excluindo `node_modules/`, `dist/`, testes), priorizando arquivos com nomes relacionados a tracing e entrypoints conhecidos.
 
 ### Go
 
@@ -187,6 +192,29 @@ python dd_github_scan.py --org MinhaOrg --token ghp_xxxx --csv
 | Arquivo | O que verifica |
 |---|---|
 | `*.csproj` | Pacote NuGet `Datadog.Trace` e versão |
+
+### Java
+
+| Arquivo | O que verifica |
+|---|---|
+| `pom.xml` | Dependência `dd-java-agent` e versão (Maven) |
+| `build.gradle` / `build.gradle.kts` | Dependência `dd-java-agent` (Gradle) |
+| `Dockerfile` | Flag `-javaagent:dd-java-agent.jar` — padrão oficial Datadog para JVM |
+| `src/main/resources/application.properties` / `.yml` | Configurações `dd.*` (Spring Boot) |
+
+### Kotlin
+
+Kotlin compila para JVM e usa o mesmo agente Java. Os mesmos arquivos e padrões do Java são verificados.
+
+### Python
+
+| Arquivo | O que verifica |
+|---|---|
+| `requirements.txt` / `requirements/*.txt` | Dependência `ddtrace` e versão |
+| `pyproject.toml` | Dependência `ddtrace` (Poetry / PEP 517) |
+| `Procfile` | Comando `ddtrace-run` — padrão oficial Datadog para Python |
+| `Dockerfile` | Comando `ddtrace-run` no CMD/ENTRYPOINT |
+| `app.py`, `main.py`, `wsgi.py`, `asgi.py`, `manage.py`... | `ddtrace.patch_all()` ou `import ddtrace` |
 
 ### Todos (independente de linguagem)
 
@@ -218,11 +246,11 @@ O score final classifica o repositório em um dos cinco níveis:
 
 | Score | Nível |
 |---|---|
-| 0% | 🔴 Não instrumentado |
+| 0% | ❌ Não instrumentado |
 | 20–49% | 🟡 Instalação básica |
 | 50–74% | 🟠 Parcialmente instrumentado |
 | 75–89% | 🟢 Bem instrumentado |
-| 90–100% | 🚀 Maturidade avançada |
+| 90–100% | ⭐ Maturidade avançada |
 
 ---
 
@@ -238,7 +266,7 @@ Ao final da varredura o script exibe uma tabela ordenada por score e um resumo p
   ──────────────────────────────────────────────────────────────
   pagamentos-service                   ruby      85%  🟢 Bem instrumentado
   email-worker                         ruby      65%  🟠 Parcialmente instrumentado
-  legacy-importer                      ruby       0%  🔴 Não instrumentado
+  legacy-importer                      ruby       0%  ❌ Não instrumentado
   ──────────────────────────────────────────────────────────────
 
   Repos analisados            : 300

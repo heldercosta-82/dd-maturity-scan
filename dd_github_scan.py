@@ -3,7 +3,6 @@
 Datadog Observability Maturity Scanner — GitHub API (sem clone)
 Usa Code Search + Contents API do GitHub para varrer N repos
 sem precisar clonar nada localmente.
-
 """
 
 import os
@@ -202,13 +201,16 @@ class GitHubClient:
 def detect_language_api(client: GitHubClient, repo: str, api_lang: str) -> str:
     """Usa a linguagem reportada pela API do GitHub como base."""
     mapping = {
-        "Ruby": "ruby",
-        "JavaScript": "nodejs",
-        "TypeScript": "nodejs",
-        "Go": "go",
-        "C#": "dotnet",
-        "F#": "dotnet",
-        "Visual Basic .NET": "dotnet",
+        "Ruby":               "ruby",
+        "JavaScript":         "nodejs",
+        "TypeScript":         "nodejs",
+        "Go":                 "go",
+        "C#":                 "dotnet",
+        "F#":                 "dotnet",
+        "Visual Basic .NET":  "dotnet",
+        "Java":               "java",
+        "Kotlin":             "kotlin",
+        "Python":             "python",
     }
     return mapping.get(api_lang or "", "unknown")
 
@@ -604,6 +606,120 @@ def check_dotnet_api(client: GitHubClient, repo: str) -> dict:
     return signals
 
 
+
+def check_java_api(client: GitHubClient, repo: str) -> dict:
+    """
+    Verifica instrumentação Datadog em projetos Java.
+    Suporte: Maven (pom.xml), Gradle (build.gradle / build.gradle.kts), Dockerfile com -javaagent.
+    """
+    signals = {}
+
+    # ── pom.xml (Maven) ──
+    pom = client.get_file(repo, "pom.xml")
+    if pom:
+        has = bool(re.search(r'dd-java-agent|datadog', pom, re.IGNORECASE))
+        m   = re.search(r'dd-java-agent.*?([0-9]+\.[0-9.]+)', pom)
+        signals["java_pom_ddtrace"] = {"found": has, "version": m.group(1) if m else None}
+    else:
+        signals["java_pom_ddtrace"] = {"found": False}
+
+    # ── build.gradle ou build.gradle.kts (Gradle) ──
+    gradle = client.get_file(repo, "build.gradle") or client.get_file(repo, "build.gradle.kts")
+    if gradle:
+        has = bool(re.search(r'dd-java-agent|datadog', gradle, re.IGNORECASE))
+        signals["java_gradle_ddtrace"] = {"found": has}
+    else:
+        signals["java_gradle_ddtrace"] = {"found": False}
+
+    # ── Dockerfile com -javaagent (padrão oficial Datadog para JVM) ──
+    dockerfile = client.get_file(repo, "Dockerfile")
+    has_agent = False
+    if dockerfile:
+        has_agent = bool(re.search(r'-javaagent.*dd-java-agent', dockerfile, re.IGNORECASE))
+    signals["java_javaagent"] = {"found": has_agent}
+
+    # ── application.properties / application.yml (Spring Boot) ──
+    app_config = (client.get_file(repo, "src/main/resources/application.properties") or
+                  client.get_file(repo, "src/main/resources/application.yml"))
+    has_config = False
+    if app_config:
+        has_config = bool(re.search(r'dd\.|datadog', app_config, re.IGNORECASE))
+    signals["java_app_config"] = {"found": has_config}
+
+    return signals
+
+
+def check_kotlin_api(client: GitHubClient, repo: str) -> dict:
+    """
+    Kotlin compila para JVM — usa o mesmo agente Java.
+    Verifica build.gradle.kts e Dockerfile adicionalmente.
+    """
+    # Reutiliza toda a lógica Java
+    signals = check_java_api(client, repo)
+    # Renomeia chaves para deixar claro que é Kotlin
+    signals["kotlin_gradle_ddtrace"] = signals.pop("java_gradle_ddtrace", {"found": False})
+    signals["kotlin_javaagent"]      = signals.pop("java_javaagent",      {"found": False})
+    signals["kotlin_pom_ddtrace"]    = signals.pop("java_pom_ddtrace",    {"found": False})
+    signals["kotlin_app_config"]     = signals.pop("java_app_config",     {"found": False})
+    return signals
+
+
+def check_python_api(client: GitHubClient, repo: str) -> dict:
+    """
+    Verifica instrumentação Datadog em projetos Python.
+    Padrões: ddtrace em requirements.txt / pyproject.toml,
+    ddtrace-run no Procfile / Dockerfile, ddtrace.patch_all() no código.
+    """
+    signals = {}
+
+    # ── requirements.txt ──
+    req = client.get_file(repo, "requirements.txt")
+    if not req:
+        req = client.get_file(repo, "requirements/base.txt") or               client.get_file(repo, "requirements/production.txt")
+    if req:
+        has = bool(re.search(r'ddtrace', req, re.IGNORECASE))
+        m   = re.search(r'ddtrace[>=<~!]+([0-9.]+)', req)
+        signals["python_req_ddtrace"] = {"found": has, "version": m.group(1) if m else None}
+    else:
+        signals["python_req_ddtrace"] = {"found": False}
+
+    # ── pyproject.toml (Poetry / PEP 517) ──
+    pyproject = client.get_file(repo, "pyproject.toml")
+    if pyproject:
+        has = bool(re.search(r'ddtrace', pyproject, re.IGNORECASE))
+        signals["python_pyproject_ddtrace"] = {"found": has}
+    else:
+        signals["python_pyproject_ddtrace"] = {"found": False}
+
+    # ── Procfile (Heroku / Cloud Run) com ddtrace-run ──
+    procfile = client.get_file(repo, "Procfile")
+    has_run = False
+    if procfile:
+        has_run = bool(re.search(r'ddtrace-run', procfile))
+    signals["python_ddtrace_run"] = {"found": has_run}
+
+    # ── Dockerfile com ddtrace-run ──
+    dockerfile = client.get_file(repo, "Dockerfile")
+    has_docker_run = False
+    if dockerfile:
+        has_docker_run = bool(re.search(r'ddtrace-run', dockerfile))
+    signals["python_docker_ddtrace_run"] = {"found": has_docker_run or has_run}
+
+    # ── patch_all() no código ──
+    patch_found = False
+    patch_file  = None
+    for path in ["app.py", "main.py", "wsgi.py", "asgi.py", "manage.py",
+                 "src/app.py", "src/main.py", "src/wsgi.py"]:
+        src = client.get_file(repo, path)
+        if src and re.search(r'ddtrace\.patch_all\(\)|import ddtrace', src, re.IGNORECASE):
+            patch_found = True
+            patch_file  = path
+            break
+    signals["python_patch_all"] = {"found": patch_found, "path": patch_file}
+
+    return signals
+
+
 def check_docker_k8s_api(client: GitHubClient, repo: str) -> dict:
     dd_pattern = re.compile(
         r'DD_AGENT_HOST|DD_SERVICE|DD_ENV|DD_VERSION|datadog[/-]agent|datadoghq\.com',
@@ -657,6 +773,15 @@ def build_search_map(client: GitHubClient, org: str) -> dict[str, dict]:
         (f"tracer.init org:{org} in:file extension:js",                          "tracer_init_node"),
         (f"tracer.init org:{org} in:file extension:ts",                          "tracer_init_node"),
         (f"dd-trace/init org:{org} in:file",                                     "nodejs_tracer_init"),
+        # Java / Kotlin
+        (f"dd-java-agent org:{org} in:file filename:pom.xml",                    "java_pom_ddtrace"),
+        (f"dd-java-agent org:{org} in:file filename:build.gradle",               "java_gradle_ddtrace"),
+        (f"javaagent.*dd-java-agent org:{org} in:file filename:Dockerfile",      "java_javaagent"),
+        # Python
+        (f"ddtrace org:{org} in:file filename:requirements.txt",                 "python_req_ddtrace"),
+        (f"ddtrace org:{org} in:file filename:pyproject.toml",                   "python_pyproject_ddtrace"),
+        (f"ddtrace-run org:{org} in:file filename:Procfile",                     "python_ddtrace_run"),
+        (f"ddtrace.patch_all org:{org} in:file extension:py",                    "python_patch_all"),
         # Go
         (f"dd-trace-go org:{org} in:file filename:go.mod",                      "go_mod_ddtrace"),
         # .NET
@@ -725,6 +850,21 @@ SIGNAL_WEIGHTS = {
     "env_dd_agent":            5,
     "docker_k8s":             10,
     "unified_tagging":        15,
+    # Java / Kotlin
+    "java_pom_ddtrace":         20,
+    "java_gradle_ddtrace":      20,
+    "java_javaagent":           30,
+    "java_app_config":          10,
+    "kotlin_pom_ddtrace":       20,
+    "kotlin_gradle_ddtrace":    20,
+    "kotlin_javaagent":         30,
+    "kotlin_app_config":        10,
+    # Python
+    "python_req_ddtrace":       20,
+    "python_pyproject_ddtrace": 20,
+    "python_ddtrace_run":       30,
+    "python_docker_ddtrace_run": 30,
+    "python_patch_all":         25,
     # APM avançado
     "custom_spans":           10,
     "log_injection":           5,
@@ -828,6 +968,12 @@ def scan_repo(client: GitHubClient, repo_meta: dict, search_signals: dict) -> Re
             signals.update(check_go_api(client, full_name))
         elif language == "dotnet":
             signals.update(check_dotnet_api(client, full_name))
+        elif language == "java":
+            signals.update(check_java_api(client, full_name))
+        elif language == "kotlin":
+            signals.update(check_kotlin_api(client, full_name))
+        elif language == "python":
+            signals.update(check_python_api(client, full_name))
 
         if signals:  # só busca infra se já há algum sinal
             signals["docker_k8s"]      = check_docker_k8s_api(client, full_name)
@@ -895,11 +1041,16 @@ def print_table(results: list[RepoResult], top: int = 0):
     langs = {}
     for r in results:
         langs.setdefault(r.language, []).append(r.score)
+
     print("\n  Por linguagem:")
+    print(f"    {'':10} {'repos':>5}  {'avg':>5}  {'basico(>=20)':>13}  {'bem(>=75)':>9}  {'avancado(>=90)':>14}")
+    print(f"    {'-'*10} {'-'*5}  {'-'*5}  {'-'*13}  {'-'*9}  {'-'*14}")
     for lang, scores in sorted(langs.items()):
-        avg_l = sum(scores) // len(scores)
-        inst  = sum(1 for s in scores if s >= 20)
-        print(f"    {lang:<10} {len(scores):>4} repos  avg {avg_l:>3}%  instrumentados: {inst}")
+        avg_l    = sum(scores) // len(scores)
+        basico   = sum(1 for s in scores if s >= 20)
+        bem      = sum(1 for s in scores if s >= 75)
+        avancado = sum(1 for s in scores if s >= 90)
+        print(f"    {lang:<10} {len(scores):>5}  {avg_l:>4}%  {basico:>13}  {bem:>9}  {avancado:>14}")
     print()
 
 
@@ -947,8 +1098,38 @@ def print_detail(results: list[RepoResult]):
         if isinstance(start_req, dict) and start_req.get("found"):
             print(f"    ✓ --require dd-trace/init  [package.json scripts.start]")
 
+        # Java / Kotlin
+        if r.language in ("java", "kotlin"):
+            prefix = "java" if r.language == "java" else "kotlin"
+            agent = r.signals.get(f"{prefix}_javaagent", {})
+            gradle = r.signals.get(f"{prefix}_gradle_ddtrace", {})
+            pom    = r.signals.get(f"{prefix}_pom_ddtrace", {})
+            if isinstance(agent, dict) and agent.get("found"):
+                print(f"    ✓ -javaagent dd-java-agent [Dockerfile]")
+            if isinstance(gradle, dict) and gradle.get("found"):
+                print(f"    ✓ dd-java-agent [build.gradle]")
+            if isinstance(pom, dict) and pom.get("found"):
+                print(f"    ✓ dd-java-agent [pom.xml]")
+
+        # Python
+        if r.language == "python":
+            run    = r.signals.get("python_ddtrace_run", {})
+            req    = r.signals.get("python_req_ddtrace", {})
+            patch  = r.signals.get("python_patch_all", {})
+            if isinstance(run, dict) and run.get("found"):
+                print(f"    ✓ ddtrace-run [Procfile/Dockerfile]")
+            if isinstance(req, dict) and req.get("found"):
+                ver = f" [{req['version']}]" if req.get("version") else ""
+                print(f"    ✓ ddtrace{ver} [requirements.txt]")
+            if isinstance(patch, dict) and patch.get("found"):
+                print(f"    ✓ ddtrace.patch_all() [{patch['path']}]")
+
         skip = {"rails_dd_initializer", "rails_log_injection", "rails_lograge", "rails_lograge_json",
-                "nodejs_tracer_init", "nodejs_log_injection", "nodejs_monitoring_toggle", "package_start_require"}
+                "nodejs_tracer_init", "nodejs_log_injection", "nodejs_monitoring_toggle", "package_start_require",
+                "java_javaagent", "java_gradle_ddtrace", "java_pom_ddtrace", "java_app_config",
+                "kotlin_javaagent", "kotlin_gradle_ddtrace", "kotlin_pom_ddtrace", "kotlin_app_config",
+                "python_ddtrace_run", "python_docker_ddtrace_run", "python_req_ddtrace",
+                "python_pyproject_ddtrace", "python_patch_all"}
         for key, val in r.signals.items():
             if key in skip:
                 continue
@@ -1171,7 +1352,7 @@ def main():
     if skip_archived:
         repos = [r for r in repos if not r.get("archived")]
     if skip_unknown:
-        known_langs = {"Ruby", "JavaScript", "TypeScript", "Go", "C#", "F#", "Visual Basic .NET"}
+        known_langs = {"Ruby", "JavaScript", "TypeScript", "Go", "C#", "F#", "Visual Basic .NET", "Java", "Kotlin", "Python"}
         before = len(repos)
         repos = [r for r in repos if r.get("language") in known_langs]
         print(f"  ✓ {before - len(repos)} repos com linguagem desconhecida ignorados.")

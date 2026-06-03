@@ -246,11 +246,11 @@ O score final classifica o repositório em um dos cinco níveis:
 
 | Score | Nível |
 |---|---|
-| 0% | ❌ Não instrumentado |
+| 0% | 🔴 Não instrumentado |
 | 20–49% | 🟡 Instalação básica |
 | 50–74% | 🟠 Parcialmente instrumentado |
 | 75–89% | 🟢 Bem instrumentado |
-| 90–100% | ⭐ Maturidade avançada |
+| 90–100% | 🚀 Maturidade avançada |
 
 ---
 
@@ -266,7 +266,7 @@ Ao final da varredura o script exibe uma tabela ordenada por score e um resumo p
   ──────────────────────────────────────────────────────────────
   pagamentos-service                   ruby      85%  🟢 Bem instrumentado
   email-worker                         ruby      65%  🟠 Parcialmente instrumentado
-  legacy-importer                      ruby       0%  ❌ Não instrumentado
+  legacy-importer                      ruby       0%  🔴 Não instrumentado
   ──────────────────────────────────────────────────────────────
 
   Repos analisados            : 300

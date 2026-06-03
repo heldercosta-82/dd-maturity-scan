@@ -829,7 +829,7 @@ SIGNAL_WEIGHTS = {
     "package_dd_trace":       20,
     "go_mod_ddtrace":         20,
     "nuget_dd_trace":         20,
-    # Initializer Rails (config/initializers/datadog.rb) — sinal principal para apps RD
+    # Initializer Rails (config/initializers/datadog.rb)
     "rails_dd_initializer":   30,  # arquivo presente com ddtrace configurado
     "rails_log_injection":    15,  # c.tracing.log_injection = true
     # Lograge
